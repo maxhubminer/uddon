@@ -16,6 +16,7 @@ import bpy
 from bpy.types import Operator, AddonPreferences
 from bpy.props import StringProperty, IntProperty, BoolProperty
 
+
 class Uddon(AddonPreferences):
     # this must match the add-on name, use '__package__'
     # when defining this in a submodule of a python package.
@@ -37,13 +38,17 @@ class Uddon(AddonPreferences):
         name="Shade Smooth on export?",
         default=True,
     )
+    suffixDraft: StringProperty(
+        name="Draft suffix",
+        default='.draft',
+    )
     suffixLP: StringProperty(
         name="Low-poly suffix",
-        default='LP',
+        default='.lp',
     )
     suffixHP: StringProperty(
         name="High-poly suffix",
-        default='HP',
+        default='.hp',
     )
 
     # number: IntProperty(
@@ -58,6 +63,7 @@ class Uddon(AddonPreferences):
         layout.prop(self, "applyOnExport")
         layout.prop(self, "applyScaling")
         layout.prop(self, "applySmoothing")
+        layout.prop(self, "suffixDraft")
         layout.prop(self, "suffixLP")
         layout.prop(self, "suffixHP")
 
@@ -72,6 +78,80 @@ def preferences(context):
     print(info)
 
     return addon_prefs
+
+
+def get_collection_parent(collection_name, master_collection):
+    for coll in bpy.data.collections:
+        if collection_name in coll.children.keys():
+            return coll
+    return master_collection
+
+def duplicate_collection_objects(original_copy_objectmap, collection, collection_new, suffix_XP):
+    for obj in collection.objects:
+        obj_new = obj.copy()
+        obj_new.name = obj_new.name[:-4] + suffix_XP  # minus 4 digits on the right + suffix
+        collection_new.objects.link(obj_new)
+        original_copy_objectmap[obj] = obj_new
+
+def parent_objects(original_copy_objectmap):
+    for orig, copy in original_copy_objectmap.items():
+        orig_parent = orig.parent
+        if not (orig_parent is None):
+            savedState = copy.matrix_world
+            copy.parent = original_copy_objectmap[orig_parent]
+            copy.matrix_world = savedState
+
+def duplicate_collection_hierarchy(original_copy_objectmap, collection, collection_new, suffix_draft, suffix_XP):
+    for coll in collection.children:
+        basename = collection_basename(coll.name, suffix_draft)
+        curIterationColl = bpy.data.collections.new(f"{basename}{suffix_XP}")
+        collection_new.children.link(curIterationColl)
+
+        duplicate_collection_objects(original_copy_objectmap, coll, curIterationColl, suffix_XP)
+
+        duplicate_collection_hierarchy(original_copy_objectmap, coll, curIterationColl, suffix_draft, suffix_XP)
+
+def collection_basename(collection_name, suffix_draft):
+    basename = ''
+    draft_ind = collection_name.find(suffix_draft)
+    if draft_ind != -1:
+        basename = collection_name[:draft_ind]
+    else:
+        basename = collection_name
+
+    return basename
+
+def duplicate_collection(suffix_draft, suffix_XP, collection, master_collection):
+
+    collection_name = collection.name
+
+    basename = collection_basename(collection_name, suffix_draft)
+
+    collection_new = bpy.data.collections.new(f"{basename}{suffix_XP}")
+
+    # link new collection to the same parent as original collection
+    parent_coll = get_collection_parent(collection_name, master_collection)
+    parent_coll.children.link(collection_new)
+
+    original_copy_objectmap = {}
+
+    # duplicate first-level collection objects
+    duplicate_collection_objects(original_copy_objectmap, collection, collection_new, suffix_XP)
+    # duplicate collection hierarchy
+    duplicate_collection_hierarchy(original_copy_objectmap, collection, collection_new, suffix_draft, suffix_XP)
+
+    parent_objects(original_copy_objectmap)
+
+
+def duplicate_collection2():
+    for window in bpy.context.window_manager.windows:
+        screen = window.screen
+
+        for area in screen.areas:
+            if area.type == 'OUTLINER':
+                override = {'window': window, 'screen': screen, 'area': area}
+                bpy.ops.outliner.collection_duplicate(override)
+                break
 
 class ExportCollection(bpy.types.Operator):
     """(uddon) Export collection"""  # Use this as a tooltip for menu items and buttons.
@@ -145,7 +225,17 @@ class CreateCollectionLP(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}  # Enable undo for the operator.
 
     def execute(self, context):  # execute() is called when running the operator.
+
+        scene = context.scene
+        master_collection = scene.collection
+        collection = context.collection
+        collection_name = context.collection.name
+        prefs = preferences(context)
+
+        duplicate_collection(prefs.suffixDraft, prefs.suffixLP, collection, master_collection)
+
         return {'FINISHED'}  # Lets Blender know the operator finished successfully.
+
 
 class CreateCollectionHP(bpy.types.Operator):
     """(uddon) Create HP collection"""  # Use this as a tooltip for menu items and buttons.
@@ -154,7 +244,17 @@ class CreateCollectionHP(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}  # Enable undo for the operator.
 
     def execute(self, context):  # execute() is called when running the operator.
+
+        scene = context.scene
+        master_collection = scene.collection
+        collection = context.collection
+        collection_name = context.collection.name
+        prefs = preferences(context)
+
+        duplicate_collection(prefs.suffixDraft, prefs.suffixHP, collection, master_collection)
+
         return {'FINISHED'}  # Lets Blender know the operator finished successfully.
+
 
 class SyncLPHP(bpy.types.Operator):
     """(uddon) Sync LP with HP collections"""  # Use this as a tooltip for menu items and buttons.
@@ -164,6 +264,7 @@ class SyncLPHP(bpy.types.Operator):
 
     def execute(self, context):  # execute() is called when running the operator.
         return {'FINISHED'}  # Lets Blender know the operator finished successfully.
+
 
 class PrepareAndExportCollection(bpy.types.Operator):
     """(uddon) Prepare and Export collection"""  # Use this as a tooltip for menu items and buttons.
@@ -177,6 +278,7 @@ class PrepareAndExportCollection(bpy.types.Operator):
         ExportCollection.execute(self, context)
 
         return {'FINISHED'}  # Lets Blender know the operator finished successfully.
+
 
 ### MENU
 
@@ -193,8 +295,10 @@ class MainMenu(bpy.types.Menu):
         layout.operator(CreateCollectionHP.bl_idname)
         layout.operator(SyncLPHP.bl_idname)
 
+
 def draw_menu(self, context):
     self.layout.menu(MainMenu.bl_idname)
+
 
 def register():
     print(f"Add-on {bl_info['name']} registered")
