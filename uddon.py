@@ -209,6 +209,10 @@ class PrepareCollection(bpy.types.Operator):
             bpy.ops.object.select_all(action='DESELECT')
             for obj in collection.all_objects:
                 obj.select_set(True)
+                # make sure that all modifiers are seen in viewport,
+                # otherwise they won't be applied on export. I often make this mistake with subdiv :(..
+                for m in obj.modifiers:
+                    m.show_viewport = True
 
             if prefs.applyScaling:
                 bpy.ops.object.transform_apply(location=False, rotation=False, scale=True, properties=False)
