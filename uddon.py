@@ -89,6 +89,7 @@ def get_collection_parent(collection_name, master_collection):
 def duplicate_collection_objects(original_copy_objectmap, collection, collection_new, suffix_XP):
     for obj in collection.objects:
         obj_new = obj.copy()
+        obj_new.data = obj.data.copy()  # Omit if you want a linked object.
         obj_new.name = obj_new.name[:-4] + suffix_XP  # minus 4 digits on the right + suffix
         collection_new.objects.link(obj_new)
         original_copy_objectmap[obj] = obj_new
